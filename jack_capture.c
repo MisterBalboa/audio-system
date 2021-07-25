@@ -1,4 +1,3 @@
-
 /*
   Kjetil Matheussen, 2005-2013.
 
@@ -61,27 +60,21 @@ void shutdown_osc(void);
 #endif
 
 #include "jack_capture.h"
-
 #include "sema.h"
-
 #include "atomic.h"
-
 #include "vringbuffer.h"
-
 
 #define JC_MAX(a,b) (((a)>(b))?(a):(b))
 #define JC_MIN(a,b) (((a)<(b))?(a):(b))
 
+#define ALIGN_UP(value, alignment) (((uintptr_t)value + alignment - 1) & -alignment)
+#define ALIGN_UP_DOUBLE(p) ALIGN_UP(p, sizeof(double)) // Using double because double should always be very large.
 
-#define ALIGN_UP(value,alignment) (((uintptr_t)value + alignment - 1) & -alignment)
-#define ALIGN_UP_DOUBLE(p) ALIGN_UP(p,sizeof(double)) // Using double because double should always be very large.
-
-
-#define OPTARGS_CHECK_GET(wrong,right) lokke==argc-1?(fprintf(stderr,"Must supply argument for '%s'\n",argv[lokke]),exit(-4),wrong):right
+#define OPTARGS_CHECK_GET(wrong, right) lokke == argc - 1 ? (fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]), exit(-4), wrong) : right
 
 #define OPTARGS_BEGIN(das_usage) {int lokke;const char *usage=das_usage;for(lokke=0;lokke<argc;lokke++){char *a=argv[lokke];if(!strcmp("--help",a)||!strcmp("-h",a)){fprintf(stderr,"%s",usage);exit(0);
 #define OPTARG(name,name2) }}else if(!strcmp(name,a)||!strcmp(name2,a)){{
-#define OPTARG_GETINT() OPTARGS_CHECK_GET(0,atoll(argv[++lokke]))
+#define OPTARG_GETINT() OPTARGS_CHECK_GET(0, atoll(argv[++lokke]))
 //int optargs_inttemp;
 //#define OPTARG_GETINT() OPTARGS_CHECK_GET(0,(optargs_inttemp=strtol(argv[++lokke],(char**)NULL,10),errno!=0?(perror("strtol"),0):optargs_inttemp))
 #define OPTARG_GETFLOAT() OPTARGS_CHECK_GET(0.0f,atof(argv[++lokke]))
@@ -90,8 +83,6 @@ void shutdown_osc(void);
 #define OPTARG_LAST() }}else if(lokke==argc-1 && argv[lokke][0]!='-'){lokke--;{
 #define OPTARGS_ELSE() }else if(1){
 #define OPTARGS_END }else{fprintf(stderr,"%s",usage);exit(-1);}}}
-
-
 
 /* Arguments and their default values */
 #define DEFAULT_MIN_BUFFER_TIME 4
@@ -171,14 +162,12 @@ static int total_xruns=0;
 static volatile int freewheel_mode=0;
 static char *jackname="jack_capture"; // limited to 33 characters
 
-
 /* Disk thread */
 #if HAVE_LAME
 static lame_global_flags *lame;
 #endif
 
 static bool disk_thread_has_high_priority=false;
-
 
 /* Helper thread */
 static pthread_t helper_thread={0};
@@ -191,12 +180,10 @@ static float *vu_peakvals=NULL;
 static DEFINE_ATOMIC(bool, is_initialized) = false; // This $@#$@#$ variable is needed because jack ports must be initialized _after_ (???) the client is activated. (stupid jack)
 static DEFINE_ATOMIC(bool, is_running) = true; // Mostly used to stop recording as early as possible.
 
-
 /* Buffer */
 static int block_size; // Set once only. Never changes value after that, even if jack buffer size changes.
 
 static bool buffer_interleaved = true;
-
 
 typedef struct buffer_t{
   int overruns;
@@ -211,12 +198,8 @@ static buffer_t *current_buffer;
 /* Jack connecting thread. */
 static pthread_t connect_thread={0} ;
 
-
 // das stop semaphore
 static SEM_TYPE_T stop_sem;
-
-
-
 
 /////////////////////////////////////////////////////////////////////
 //////////////////////// VARIOUS ////////////////////////////////////
@@ -236,22 +219,29 @@ void get_free_mem(void){
 #endif
 char *string_concat(char *s1,char *s2);
 
-static void verbose_print(const char *fmt, ...){
+static void verbose_print(const char *fmt, ...) {
   if (absolutely_silent==true) return;
-  if(verbose==true){
+
+  if(verbose==true) {
     va_list argp;
     va_start(argp,fmt);
     vfprintf(stderr,fmt,argp);
-    va_end(argp); } }
+    va_end(argp);
+  }
+}
 
 static void* my_calloc(size_t size1,size_t size2){
   size_t size = size1*size2;
   void*  ret  = malloc(size);
-  if(ret==NULL){
+
+  if(ret == NULL) {
     fprintf(stderr,"\nOut of memory. Try a smaller buffer.\n");
-    return NULL; }
+    return NULL;
+  }
+
   memset(ret,0,size);
-  return ret; }
+  return ret;
+}
 
 static bool set_high_priority(void){
   static bool shown_warning = false;
@@ -784,10 +774,10 @@ static void *helper_thread_func(void *arg){
   if(show_bufferusage)
     init_show_bufferusage();
 
-  do{
+  do {
     bool move_cursor_to_top_doit=true;
 
-    if(message_string[0]!=0){
+    if(message_string[0] != 0) {
       if(use_vu || show_bufferusage){
 	move_cursor_to_top();
         if(!use_vu){
@@ -836,7 +826,6 @@ static void *helper_thread_func(void *arg){
   return NULL;
 }
 
-
 enum ThreadType{
   UNINITIALIZED_THREAD_TYPE,
   OTHER_THREAD,
@@ -845,7 +834,6 @@ enum ThreadType{
 };
 
 static __thread enum ThreadType g_thread_type = UNINITIALIZED_THREAD_TYPE;
-
 
 static pthread_mutex_t print_message_mutex = PTHREAD_MUTEX_INITIALIZER;
 void print_message(const char *fmt, ...){
@@ -1987,7 +1975,7 @@ static void* connection_thread(void *arg){
   return NULL;
 }
 
-static void wake_up_connection_thread(void){
+static void wake_up_connection_thread(void) {
   if(use_manual_connections==false)
 #ifdef __APPLE__
     semaphore_signal(connection_semaphore);
@@ -1996,16 +1984,16 @@ static void wake_up_connection_thread(void){
 #endif
 }
 
-static void start_connection_thread(void){
+static void start_connection_thread(void) {
 #ifdef __APPLE__
   semaphore_create(mach_task_self(), &connection_semaphore, SYNC_POLICY_FIFO, 0);
 #else
-  sem_init(&connection_semaphore,0,0);
+  sem_init(&connection_semaphore, 0, 0);
 #endif
-  pthread_create(&connect_thread,NULL,connection_thread,NULL);
+  pthread_create(&connect_thread, NULL, connection_thread, NULL);
 }
 
-static void stop_connection_thread(void){
+static void stop_connection_thread(void) {
   wake_up_connection_thread();
   pthread_join(connect_thread, NULL);
 }
@@ -2098,9 +2086,11 @@ static void jack_shutdown(void *arg){
 
 static jack_client_t *new_jack_client(char *name){
   jack_status_t status;
-  jack_client_t *client=jack_client_open(name,JackNoStartServer,&status,NULL);
 
-  if(client==NULL){
+  // jack_client_open comes from library jack/jack.h
+  jack_client_t *client = jack_client_open(name, JackNoStartServer, &status, NULL);
+
+  if(client == NULL) {
     print_message("jack_client_open() failed, "
 		"status = 0x%2.0x\n", status);
     exit(1);
@@ -2115,10 +2105,11 @@ static void start_jack(void){
   if(I_am_already_called) // start_jack is called more than once if the --port argument has been used.
     return;
 
-  client=new_jack_client(jackname);
+  // function new jack client defined in this file
+  client = new_jack_client(jackname);
 
-  jack_samplerate=jack_get_sample_rate(client);
-  block_size=jack_get_buffer_size(client);
+  jack_samplerate = jack_get_sample_rate(client);
+  block_size = jack_get_buffer_size(client);
 
   I_am_already_called=true;
 }
@@ -2328,7 +2319,7 @@ void init_arguments(int argc, char *argv[]){
                 "\n"
                 )
     {
-      OPTARG("--advanced-options","--help2") printf("%s",advanced_help);exit(0);
+      OPTARG("--advanced-options","--help2") printf("%s", advanced_help);exit(0);
       OPTARG("--help-osc","--help3") printf("%s",osc_help);exit(0);
       OPTARG("--bitdepth","-b") bitdepth = OPTARG_GETINT();
       OPTARG("--bufsize","-B") min_buffer_time = OPTARG_GETFLOAT(); min_buffer_time=JC_MAX(0.01,min_buffer_time);
@@ -2396,23 +2387,23 @@ void init_arguments(int argc, char *argv[]){
       OPTARG_LAST() base_filename=OPTARG_GETSTRING();
     }OPTARGS_END;
 
-  if(use_jack_freewheel==true && use_jack_transport==true){
+  if(use_jack_freewheel == true && use_jack_transport == true){
     fprintf(stderr,"--jack-transport and --jack-freewheel are mutually exclusive options.\n");
     exit(2);
 	}
 
-  if(write_to_mp3==true){
+  if(write_to_mp3 == true) {
 #if HAVE_LAME
-    soundfile_format="mp3";
-    soundfile_format_is_set=true;
-    if(min_buffer_time<=0.0f)
+    soundfile_format = "mp3";
+    soundfile_format_is_set = true;
+    if(min_buffer_time <= 0.0f)
       min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
 #else
     fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
     exit(2);
 #endif
-  }else{
-    if(min_buffer_time<=0.0f)
+  } else {
+    if(min_buffer_time <= 0.0f)
       min_buffer_time = DEFAULT_MIN_BUFFER_TIME;
   }
 
@@ -2420,6 +2411,7 @@ void init_arguments(int argc, char *argv[]){
   // If no format specified try to determine format from the base_filename
   if(!soundfile_format_is_set && base_filename) {
     char *ext = strrchr(base_filename, '.');
+
     if(ext) {
       ext++; // skip leading .
       soundfile_format = ext;
@@ -2460,37 +2452,41 @@ void init_arguments(int argc, char *argv[]){
     if(base_filename==NULL){
       base_filename=my_calloc(1,5000);
       for(int try=1;try<100000;try++){
-	sprintf(base_filename,"%s%0*d.%s",filename_prefix,leading_zeros+1,try,soundfile_format);
-	if(access(base_filename,F_OK)) break;
+        sprintf(base_filename,"%s%0*d.%s",filename_prefix,leading_zeros+1,try,soundfile_format);
+        if(access(base_filename,F_OK)) break;
       }
     }
   }
 
 }
 
-
-char *string_concat(char *s1,char *s2){
-  char *ret=malloc(strlen(s1)+strlen(s2)+4);
+char *string_concat(char *s1,char *s2) {
+  char *ret=malloc(strlen(s1) + strlen(s2) + 4);
   sprintf(ret,"%s%s",s1,s2);
   return ret;
 }
 
+// looking for the character "c" in string "s"
+// returns the position (index) of the character "c"
+// if not found returns -1
 int string_charpos(char *s, char c){
-  int pos=0;
-  while(s[pos]!=0){
-    if(s[pos]==c)
+  int pos = 0;
+
+  while(s[pos] != 0){
+    if(s[pos] == c)
       return pos;
     pos++;
   }
+
   return -1;
 }
 
-char *substring(char *s,int start,int end){
-  char *ret       = calloc(1,end-start+1);
-  int   read_pos  = start;
-  int   write_pos = 0;
+char *substring(char *s, int start, int end){
+  char *ret = calloc(1, end - start + 1);
+  int read_pos = start;
+  int write_pos = 0;
 
-  while(read_pos<end)
+  while(read_pos < end)
     ret[write_pos++] = s[read_pos++];
 
   return ret;
@@ -2498,65 +2494,107 @@ char *substring(char *s,int start,int end){
 
 // modifies input.
 char *strip_whitespace(char *s){
-  char *ret=s;
+  // Copy the address of the input string
+  // to ret so further pointer arithmetic
+  // does not affect the original pointer
+  char *ret = s;
 
   // strip before
+  // isspace is a function from stdlib
+  // by doing pointer arithmetic
+  // increments the address of the pointer tmp
+  // the original str address remains unmodified
+  //
+  // strips white space at the beginning of str
   while(isspace(ret[0]))
+    // goes recursively forward
+    // basically the pointer variable ret
+    // will end up to be the address of the
+    // first non white character
     ret++;
 
-
   // strip after
-  int pos=strlen(ret)-1;
-  while(isspace(ret[pos])){
-    ret[pos]=0;
+  int pos = strlen(ret) - 1;
+
+  // strips white space at the end of str
+  while(isspace(ret[pos])) {
+    // Sets any white character after the str
+    // to be 0 so string is terminated there
+    // goes recursively backwards
+    ret[pos] = 0;
     pos--;
   }
-
 
   return ret;
 }
 
+// max size is used as 500
+char **read_config(int *argc, int max_size) {
+  // Allocates space in memory
+  // sizeof(char*) is the size of the address like 0x7ffee6ffa7b0
+  // usually 4 (bytes) in 32 bits environment or 8 (bytes) in 64 bits environment
+  // Basically allocating 500 spaces of 8 bytes in memory initilized at zeros
+  // we declare argv as double pointer because it will hold memory addresses
+  char **argv = calloc(max_size, sizeof(char*));
 
-char **read_config(int *argc,int max_size){
-  char **argv=calloc(max_size,sizeof(char*));
+  // Setting the address of an int to be zero?? Why...
   *argc = 0;
 
-  if(getenv("HOME")==NULL)
+  // if HOME env variable is null we will return the
+  // address of the whole memory block created by calloc
+  // with only zeros
+  if(getenv("HOME") == NULL)
     return argv;
 
-  FILE *file = fopen(string_concat(getenv("HOME"), "/.jack_capture/config"),"r");
+  // getenv will return a pointer
+  FILE *file = fopen(
+      string_concat(getenv("HOME"), "/.jack_capture/config"), "r");
+
+  // if no file could be open at that location we return the
+  // address of the whole memory block created by calloc
+  // with only zeros
   if(file==NULL)
     return argv;
 
+  // allocating 512 bytes of memory in readline
   char *readline = malloc(512);
-  while(fgets(readline,510,file)!=NULL){
+
+  // reads line by line of the file
+  // why the hardcoded 510 still a mistery
+  while(fgets(readline, 510, file) != NULL) {
     char *line = strip_whitespace(readline);
-    if(line[0]==0 || line[0]=='#')
+
+    // checking if the line is empty
+    // or if it is a commented line
+    if(line[0] == 0 || line[0] == '#')
       continue;
 
-    if(*argc>=max_size-3){
-      fprintf(stderr,"Too many arguments in config file.\n");
+    if(*argc >= max_size - 3) {
+      fprintf(stderr, "Too many arguments in config file.\n");
       exit(-2);
     }
 
     int split_pos = string_charpos(line,'=');
-    if(split_pos!=-1){
-      char *name = strip_whitespace(substring(line,0,split_pos));
-      char *value = strip_whitespace(substring(line,split_pos+1,strlen(line)));
-      if(strlen(name)>0 && strlen(value)>0){
+
+    // if there is no character "=" in this line
+    if(split_pos != -1) {
+      char *name = strip_whitespace(substring(line, 0, split_pos));
+      char *value = strip_whitespace(
+        substring(line, split_pos + 1, strlen(line)));
+
+      if(strlen(name) > 0 && strlen(value) > 0){
         argv[*argc] = string_concat("--",name);
         *argc       = *argc + 1;
 
         if(value[0]=='~')
-          value = string_concat(getenv("HOME"),&value[1]);
+          value = string_concat(getenv("HOME"), &value[1]);
 
         argv[*argc] = value;
-        *argc       = *argc + 1;
-        //printf("pos: %d -%s- -%s-\n",split_pos,name,value);
+        *argc = *argc + 1;
       }
-    }else{
-      argv[*argc] = string_concat("--",line);
-      *argc       = *argc + 1;
+    } else {
+      argv[*argc] = string_concat("--", line);
+      *argc = *argc + 1;
     }
   }
 
@@ -2567,7 +2605,7 @@ void init_various(void){
   verbose_print("main() init jack 1\n");
   // Init jack 1
   {
-    if(use_manual_connections==false)
+    if(use_manual_connections == false)
       start_connection_thread();
     start_jack();
     portnames_add_defaults();
@@ -2743,16 +2781,16 @@ void stop_recording_and_cleanup(void){
 }
 
 
-void append_argv(char **v1,const char **v2,int len1,int len2,int max_size){
+void append_argv(char **v1, const char **v2, int len1, int len2, int max_size) {
   int write_pos = len1;
   int read_pos  = 0;
 
-  if(len1+len2>=max_size){
+  if(len1 + len2 >= max_size) {
     fprintf(stderr,"Too many arguments.\n");
     exit(-3);
   }
 
-  while(write_pos<len1+len2)
+  while(write_pos < len1 + len2)
     v1[write_pos++] = (char*)v2[read_pos++];
 }
 
@@ -2772,21 +2810,32 @@ void print_argv(char **argv,int argc){
 int main (int argc, char *argv[]){
   //get_free_mem();
   //mainpid=getpid();
+
   g_thread_type = MAIN_THREAD;
 
+  // Here we just redeclare the array of pointers
+  // as a double star
   char **org_argv = argv;
 
-  // remove exe name from argument list.
+  // remove executable name, which is the arguments first element
+  // ampersand captures the mem address of the first element
+  // in the array. We then assign this pointer to argv
+  // effectively removing the first element from the array
   argv = &argv[1];
-  argc = argc-1;
 
-  // get arguments both from command line and config file (config file is read first, so that command line can override)
+  // substract one from the number of arguments
+  argc = argc - 1;
+
+  // get arguments both from command line and config file
+  // (config file is read first, so that command line can override)
   int c_argc;
-  char **c_argv = read_config(&c_argc,500);
-  append_argv(c_argv,(const char**)argv,c_argc,argc,500);
-  //print_argv(c_argv,c_argc+argc);
 
-  init_arguments(c_argc+argc,c_argv);
+  // we pass 500 arbitrarely as the max_size
+  // of the read config function
+  char **c_argv = read_config(&c_argc, 500);
+  append_argv(c_argv, (const char**)argv, c_argc, argc, 500);
+
+  init_arguments(c_argc + argc, c_argv);
 
 #if HAVE_LIBLO
   if (init_osc(osc_port)) {
@@ -2801,7 +2850,7 @@ int main (int argc, char *argv[]){
 
   stop_recording_and_cleanup();
 
-  if (timemachine_mode==true && program_ended_with_return==true){
+  if (timemachine_mode == true && program_ended_with_return == true) {
     execvp (org_argv[0], (char *const *) org_argv);
     print_message("Error: exec returned: %s.\n", strerror(errno));
     exit(127);
