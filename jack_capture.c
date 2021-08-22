@@ -2532,7 +2532,7 @@ char *strip_whitespace(char *s){
 char **read_config(int *argc, int max_size) {
   // Allocates space in memory
   // sizeof(char*) is the size of the address like 0x7ffee6ffa7b0
-  // usually 4 (bytes) in 32 bits environment or 8 (bytes) in 64 bits environment
+  // 4 (bytes) in 32 bits environment or 8 (bytes) in 64 bits environment
   // Basically allocating 500 spaces of 8 bytes in memory initilized at zeros
   // we declare argv as double pointer because it will hold memory addresses
   char **argv = calloc(max_size, sizeof(char*));
@@ -2546,7 +2546,8 @@ char **read_config(int *argc, int max_size) {
   if(getenv("HOME") == NULL)
     return argv;
 
-  // getenv will return a pointer
+  // getenv will return a pointer to a string
+  // this is to open the config file
   FILE *file = fopen(
       string_concat(getenv("HOME"), "/.jack_capture/config"), "r");
 
@@ -2556,6 +2557,7 @@ char **read_config(int *argc, int max_size) {
   if(file==NULL)
     return argv;
 
+  // Config file was found...
   // allocating 512 bytes of memory in readline
   char *readline = malloc(512);
 
@@ -2574,7 +2576,7 @@ char **read_config(int *argc, int max_size) {
       exit(-2);
     }
 
-    int split_pos = string_charpos(line,'=');
+    int split_pos = string_charpos(line, '=');
 
     // if there is no character "=" in this line
     if(split_pos != -1) {
@@ -2594,6 +2596,8 @@ char **read_config(int *argc, int max_size) {
       }
     } else {
       argv[*argc] = string_concat("--", line);
+
+      // increment the counter of the number of arguments
       *argc = *argc + 1;
     }
   }
@@ -2830,14 +2834,16 @@ int main (int argc, char *argv[]){
   // c_carts stands for config
   // get arguments both from command line and config file
   // (config file is read first, so that command line can override)
-  int c_argc;
+  int config_argc;
 
   // we pass 500 arbitrarely as the max_size
   // of the read config function
-  char **c_argv = read_config(&c_argc, 500);
-  append_argv(c_argv, (const char**)argv, c_argc, argc, 500);
+  // basically all options set in the config file are added
+  // to the argv pointer as if they were passed through command line
+  char **config_argv = read_config(&config_argc, 500);
+  append_argv(config_argv, (const char**)argv, config_argc, argc, 500);
 
-  init_arguments(c_argc + argc, c_argv);
+  init_arguments(config_argc + argc, config_argv);
 
 #if HAVE_LIBLO
   if (init_osc(osc_port)) {
