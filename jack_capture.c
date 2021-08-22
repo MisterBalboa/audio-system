@@ -2817,15 +2817,17 @@ int main (int argc, char *argv[]){
   // as a double star
   char **org_argv = argv;
 
-  // remove executable name, which is the arguments first element
-  // ampersand captures the mem address of the first element
+  // Remove executable name, which is the arguments first element.
+  // Ampersand captures the mem address of the first element
   // in the array. We then assign this pointer to argv
   // effectively removing the first element from the array
   argv = &argv[1];
 
   // substract one from the number of arguments
+  // to be consisent
   argc = argc - 1;
 
+  // c_carts stands for config
   // get arguments both from command line and config file
   // (config file is read first, so that command line can override)
   int c_argc;
