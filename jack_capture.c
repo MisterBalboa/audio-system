@@ -2085,7 +2085,7 @@ static jack_client_t *new_jack_client(char *name){
 }
 
 
-static void start_jack(void){
+static void start_jack(void) {
   static bool I_am_already_called=false;
   if(I_am_already_called) // start_jack is called more than once if the --port argument has been used.
     return;
@@ -2335,7 +2335,7 @@ void init_arguments(int argc, char *argv[]) {
       }
 
       bitdepth = atoll(argv[++lokke]);
-    } else if (!strcmp("--bufsize", a) || !strcmp("--B", a)) {
+    } else if (!strcmp("--bufsize", a) || !strcmp("-B", a)) {
       if (lokke == argc - 1) {
         fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
         exit(0);
@@ -2343,7 +2343,7 @@ void init_arguments(int argc, char *argv[]) {
 
       min_buffer_time = atof(argv[++lokke]);
       min_buffer_time = max_float(0.01, min_buffer_time);
-    } else if (!strcmp("--channels", a) || !strcmp("--c", a)) {
+    } else if (!strcmp("--channels", a) || !strcmp("-c", a)) {
       if (lokke == argc - 1) {
         fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
         exit(0);
@@ -2351,22 +2351,49 @@ void init_arguments(int argc, char *argv[]) {
 
       num_channels = atoll(argv[++lokke]);
       num_channels = max_int(0, num_channels);
+    } else if (!strcmp("--filename-prefix", a) || !strcmp("-fp", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      filename_prefix = argv[++lokke];
+    } else if (!strcmp("--leading-zeros", a) || !strcmp("-z", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      leading_zeros = argv[++lokke];
+    } else if (!strcmp("--recording-time", a) || !strcmp("-d", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      {
+        recording_time       = atof(argv[++lokke]);
+        start_jack();
+        num_frames_to_record = seconds_to_frames(recording_time);
+        no_stdin             = true;
+        fixed_duration       = true;
+      }
+    } else if (!strcmp("--port", a) || !strcmp("-p", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      {
+        start_jack();
+        portnames_add(argv[++lokke]);
+      }
     } else {
       printf("Unknown argument: %s\n", a); 
     }
   }
 
 //     {
-//       OPTARG("--filename-prefix","-fp") filename_prefix = OPTARG_GETSTRING();
-//       OPTARG("--leading-zeros","-z") leading_zeros = OPTARG_GETINT();
-//       OPTARG("--recording-time","-d"){
-//         recording_time       = OPTARG_GETFLOAT();
-//         start_jack();
-//         num_frames_to_record = seconds_to_frames(recording_time);
-//         no_stdin             = true;
-//         fixed_duration       = true;
-//       }
-//       OPTARG("--port","-p") { start_jack() ; portnames_add(OPTARG_GETSTRING()); }
 //       OPTARG("--format","-f"){
 //         soundfile_format=OPTARG_GETSTRING();
 //         if(!strcmp("mp3",soundfile_format)){
@@ -2490,7 +2517,6 @@ void init_arguments(int argc, char *argv[]) {
 //       }
 //     }
 //   }
-
 }
 
 char *string_concat(char *s1,char *s2) {
@@ -2882,6 +2908,7 @@ int main (int argc, char *argv[]){
   printf("global bitdepth %d\n", bitdepth);
   printf("global bufsize %f\n", min_buffer_time);
   printf("global num channels %d\n", num_channels);
+  printf("filename prfix %s\n", filename_prefix);
 
 // #if HAVE_LIBLO
 //   if (init_osc(osc_port)) {
