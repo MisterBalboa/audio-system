@@ -70,20 +70,6 @@ void shutdown_osc(void);
 #define ALIGN_UP(value, alignment) (((uintptr_t)value + alignment - 1) & -alignment)
 #define ALIGN_UP_DOUBLE(p) ALIGN_UP(p, sizeof(double)) // Using double because double should always be very large.
 
-#define OPTARGS_CHECK_GET(wrong, right) lokke == argc - 1 ? (fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]), exit(-4), wrong) : right
-
-#define OPTARGS_BEGIN(das_usage) {int lokke;const char *usage=das_usage;for(lokke=0;lokke<argc;lokke++){char *a=argv[lokke];if(!strcmp("--help",a)||!strcmp("-h",a)){fprintf(stderr,"%s",usage);exit(0);
-#define OPTARG(name,name2) }}else if(!strcmp(name,a)||!strcmp(name2,a)){{
-#define OPTARG_GETINT() OPTARGS_CHECK_GET(0, atoll(argv[++lokke]))
-//int optargs_inttemp;
-//#define OPTARG_GETINT() OPTARGS_CHECK_GET(0,(optargs_inttemp=strtol(argv[++lokke],(char**)NULL,10),errno!=0?(perror("strtol"),0):optargs_inttemp))
-#define OPTARG_GETFLOAT() OPTARGS_CHECK_GET(0.0f,atof(argv[++lokke]))
-#define OPTARG_GETSTRING() OPTARGS_CHECK_GET("",argv[++lokke])
-#define OPTARG_GETBOOL() ({const char *response = OPTARG_GETSTRING(); !strcasecmp(response,"false") ? false : !strcasecmp(response,"true") ? true : (fprintf(stderr,"Argument for '%s' must be \"false\" or \"true\"\n",argv[lokke-1]), exit(-5) , false);})
-#define OPTARG_LAST() }}else if(lokke==argc-1 && argv[lokke][0]!='-'){lokke--;{
-#define OPTARGS_ELSE() }else if(1){
-#define OPTARGS_END }else{fprintf(stderr,"%s",usage);exit(-1);}}}
-
 /* Arguments and their default values */
 #define DEFAULT_MIN_BUFFER_TIME 4
 #define DEFAULT_MIN_MP3_BUFFER_TIME 8
@@ -231,16 +217,19 @@ static void verbose_print(const char *fmt, ...) {
   }
 }
 
-static void* my_calloc(size_t size1,size_t size2){
-  size_t size = size1*size2;
-  void*  ret  = malloc(size);
+static void * my_calloc(size_t size1,size_t size2){
+  size_t size = size1 * size2;
+  void * ret = malloc(size);
 
   if(ret == NULL) {
     fprintf(stderr,"\nOut of memory. Try a smaller buffer.\n");
     return NULL;
   }
 
-  memset(ret,0,size);
+  // memset replaces the bytes at destination
+  // here setting them to 0 in decimal which is the null char
+  // is basically cleaning the memory returned by malloc
+  memset(ret, 0, size);
   return ret;
 }
 
@@ -385,11 +374,16 @@ static void buffers_init(){
 /////////////////////////////////////////////////////////////////////
 //////////////////////// PORTNAMES //////////////////////////////////
 /////////////////////////////////////////////////////////////////////
-static const char **cportnames=NULL;
-static int num_cportnames=0;
+
+// this will hold pointers to strings
+// with the name of the ports for recording
+// exampel system:capture_1
+static const char **cportnames = NULL;
+static int num_cportnames = 0;
 
 static int findnumports(const char **ports){
   int ret=0;
+
   while(ports && ports[ret]!=NULL)
     ret++;
   return ret;
@@ -451,36 +445,48 @@ static void portnames_add(char *name){
   const char **new_outportnames;
   int add_ch;
 
-  if(name[strlen(name)-1]=='*'){
+  if (name[strlen(name) - 1] == '*') {
+    // if an asterisk is given the program will try to
+    // find ports on its own.
     char *pattern=strdup(name);
     pattern[strlen(name)-1]=0;
 
-    new_outportnames          = jack_get_ports(client,pattern,"",0);
-    //char **new_outportnames = (char**)jack_get_ports(client,"system:capture_1$","",0);
+    new_outportnames          = jack_get_ports(client, pattern, "", 0);
     add_ch                    = findnumports(new_outportnames);
     free(pattern);
-  }else{
-    new_outportnames          = my_calloc(1,sizeof(char*));
+  } else {
+    // sizeof(char*) is the size of the pointer
+    // raspberry pi has 4 bytes addresses
+    // multiplied by 1 is just allocating 4 bytes of memory
+    new_outportnames          = my_calloc(1, sizeof(char*));
+
+    // new_outportnames is a double pointer, which is 4 bytes now
+    // setting the first element to be the pointer of the name given
     new_outportnames[0]       = name;
     add_ch                    = 1;
   }
 
-  if(add_ch>0){
+  if (add_ch > 0) {
     int ch;
 
-    cportnames=realloc(cportnames,(num_cportnames+add_ch)*sizeof(char*));
+    // num_cportnames is a static int set to 0 at the top
+    // cportnames is a double pointer initialized as null at the top
+    // it should hold pointers to the names of ports like system:capture_1
 
-    for(ch=0;ch<add_ch;ch++){
-      cportnames[num_cportnames]=new_outportnames[ch];
-      //fprintf(stderr,"ch: %d, num_ch: %d, new_outportnames[ch]: %s, %s\n",ch,num_cportnames,new_outportnames[ch],new_outportnames[ch+1]);
+    cportnames = realloc(cportnames, (num_cportnames+add_ch) * sizeof(char*));
+
+    for (ch = 0; ch < add_ch; ch++) {
+      cportnames[num_cportnames] = new_outportnames[ch];
       num_cportnames++;
     }
-
-  }else{
+  } else {
     fprintf(stderr,"\nWarning, no port(s) with name \"%s\".\n",name);
-    if(cportnames==NULL)
-      if(silent==false)
-	fprintf(stderr,"This could lead to using default ports instead.\n");
+
+    if (cportnames == NULL) {
+      if (silent == false) {
+	      fprintf(stderr,"This could lead to using default ports instead.\n");
+      }
+    }
   }
 }
 
@@ -490,11 +496,11 @@ static const char **portnames_get_connections(int ch, bool *using_calloc){
   if(ch>=num_cportnames)
     return NULL;
   else{
-    jack_port_t  *port = jack_port_by_name(client,cportnames[ch]);
+    jack_port_t  *port = jack_port_by_name(client, cportnames[ch]);
     const char  **ret;
 
     if(port==NULL){
-      print_message("Error, port with name \"%s\" not found.\n",cportnames[ch]);
+      print_message("Error, port with name \"%s\" not found.\n", cportnames[ch]);
       return NULL;
     }
 
@@ -2310,17 +2316,13 @@ float max_float(float a, float b) {
 }
 
 void init_arguments(int argc, char *argv[]) {
-  printf("intializing arguments... n: %d\n", argc);
   int lokke;
-  
+
   for (lokke = 0; lokke < argc; lokke++) {
     char *a = argv[lokke];
-    
+
     if (!strcmp("--help", a) || !strcmp("-h", a)) {
       fprintf(stderr, "%s", usage);
-      exit(0);
-    } else if (!strcmp("--advanced-options", a) || !strcmp("--help2", a)) {
-      printf("%s", advanced_help);
       exit(0);
     } else if (!strcmp("--advanced-options", a) || !strcmp("--help2", a)) {
       printf("%s", advanced_help);
@@ -2388,135 +2390,282 @@ void init_arguments(int argc, char *argv[]) {
         start_jack();
         portnames_add(argv[++lokke]);
       }
+    } else if (!strcmp("--format", a) || !strcmp("-f", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      soundfile_format = argv[++lokke];
+
+      if(!strcmp("mp3", soundfile_format)){
+        write_to_mp3 = true;
+      }
+
+      soundfile_format_is_set=true;
+    } else if (!strcmp("--version", a) || !strcmp("-v", a)) {
+      puts(VERSION);
+      exit(0);
+    } else if (!strcmp("--silent", a) || !strcmp("-s", a)) {
+      silent = true;
+    } else if (!strcmp("--debug", a) || !strcmp("-d", a)) {
+      DEBUG = true;
+    } else if (!strcmp("--absolutelty-silent", a) || !strcmp("-as", a)) {
+      absolutely_silent = true;
+      use_vu = false;
+      silent = true;
+      show_bufferusage = false;
+    } else if (!strcmp("--verbose", a) || !strcmp("-V", a)) {
+      verbose = true;
+    } else if (!strcmp("--print-formats", a) || !strcmp("-pf", a)) {
+      print_all_formats();
+      exit(0);
+    } else if (!strcmp("--mp3", a) || !strcmp("-mp3", a)) {
+      write_to_mp3 = true;
+    } else if (!strcmp("--mp3-quality", a) || !strcmp("-mp3q", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      das_lame_quality = atoll(argv[++lokke]);
+      write_to_mp3 = true;
+    } else if (!strcmp("--mp3-bitrate", a) || !strcmp("-mp3b", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      das_lame_bitrate = atoll(argv[++lokke]);
+      write_to_mp3 = true;
+    } else if (!strcmp("--mp3-samplerate", a) || !strcmp("-mp3s", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      das_lame_samplerate = atoll(argv[++lokke]);
+      write_to_mp3 = true;
+    } else if (!strcmp("--ogg-quality", a) || !strcmp("-oq", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      ogg_vbr_quality = atof(argv[++lokke]);
+      soundfile_format_is_set = true;
+      soundfile_format = "ogg";
+    } else if (!strcmp("--write-to-stdout", a) || !strcmp("-ws", a)) {
+      write_to_stdout = true;
+      use_vu = false;
+      show_bufferusage = false;
+    } else if (!strcmp("--disable-meter", a) || !strcmp("-dm", a)) {
+      use_vu = false;
+    } else if (!strcmp("--hide-buffer-usage", a) || !strcmp("-hbu", a)) {
+      show_bufferusage = false;
+    } else if (!strcmp("--disable-console", a) || !strcmp("-dc", a)) {
+      use_vu = false;
+      show_bufferusage = false;
+    } else if (!strcmp("--no_stdin", a) || !strcmp("-ns", a)) {
+      no_stdin = true;
+    } else if (!strcmp("--daemon", a) || !strcmp("", a)) {
+      no_stdin = true;
+      absolutely_silent = true;
+      use_vu = false;
+      silent = true;
+      show_bufferusage = false;
+    } else if (!strcmp("--linear-meter", a) || !strcmp("-lm", a)) {
+      vu_dB = false;
+    } else if (!strcmp("--db-meter-reference", a) || !strcmp("-dBr", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+       vu_dB = true;
+       vu_bias = powf(10.0f, atof(argv[++lokke]) * -0.05f); // from meterbridge
+    } else if (!strcmp("--meterbridge", a) || !strcmp("-mb", a)) {
+       use_meterbridge=true;
+    } else if (!strcmp("--meterbridge-type", a) || !strcmp("-mt", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+       use_meterbridge = true;
+       meterbridge_type = argv[++lokke];
+    } else if (!strcmp("--meterbridge-reference", a) || !strcmp("-mr", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      use_meterbridge = true;
+      meterbridge_reference = argv[++lokke];
+    } else if (!strcmp("--jack-transport", a) || !strcmp("-jt", a)) {
+      use_jack_transport = true;
+    } else if (!strcmp("--jack-freewheel", a) || !strcmp("-jf", a)) {
+      use_jack_freewheel = true;
+    } else if (!strcmp("--manual-connections", a) || !strcmp("-mc", a)) {
+      use_manual_connections = true;
+    } else if (!strcmp("--filename", a) || !strcmp("-fn", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      base_filename = argv[++lokke];
+    } else if (!strcmp("--osc", a) || !strcmp("-O", a)) {
+#if HAVE_LIBLO
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      osc_port = atoi(argv[++lokke]);
+#else
+      fprintf(stderr,"osc not supported. liblo was not installed when compiling jack_capture\n");
+      exit(3);
+#endif
+    } else if (!strcmp("--hook-open", a) || !strcmp("-Ho", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      hook_cmd_opened = argv[++lokke];
+    } else if (!strcmp("--hook-close", a) || !strcmp("-Hc", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      hook_cmd_closed = argv[++lokke];
+    } else if (!strcmp("--hook-rotate", a) || !strcmp("-Hr", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      hook_cmd_rotate = argv[++lokke];
+    } else if (!strcmp("--hook-timing", a) || !strcmp("-Ht", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      hook_cmd_timing = argv[++lokke];
+    } else if (!strcmp("--timestamp", a) || !strcmp("-S", a)) {
+      create_tme_file = true;
+    } else if (!strcmp("--rotatefile", a) || !strcmp("-Rf", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      rotateframe = atoll(argv[++lokke]);
+    } else if (!strcmp("--timemachine", a) || !strcmp("-tm", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      timemachine_mode = true;
+    } else if (!strcmp("--timemachine-prebuffer", a) || !strcmp("-tmpb", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      }
+
+      timemachine_prebuffer = atof(argv[++lokke]);
+    } else if (!strcmp("--jack-name", a) || !strcmp("-jn", a)) {
+      if (lokke == argc - 1) {
+        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
+        exit(0);
+      } else if (lokke == argc-1 && argv[lokke][0] != '-') {
+        lokke--;
+      }
+
+      jackname = argv[++lokke];
+      base_filename = argv[++lokke];
     } else {
-      printf("Unknown argument: %s\n", a); 
+      fprintf(stderr, "%s", usage);
+      exit(-1);
     }
   }
 
-//     {
-//       OPTARG("--format","-f"){
-//         soundfile_format=OPTARG_GETSTRING();
-//         if(!strcmp("mp3",soundfile_format)){
-//           write_to_mp3 = true;
-//         }
-//         soundfile_format_is_set=true;
-//       }
-//       OPTARG("--version","-v") puts(VERSION);exit(0);
-//       OPTARG("--silent","-s") silent=true;
-//       OPTARG("--debug", "-d") DEBUG=true;
-//       OPTARG("--absolutely-silent","-as") absolutely_silent=true; use_vu=false; silent=true; show_bufferusage=false;
-//       OPTARG("--verbose","-V") verbose=true;
-//       OPTARG("--print-formats","-pf") print_all_formats();exit(0);
-//       OPTARG("--mp3","-mp3") write_to_mp3 = true;
-//       OPTARG("--mp3-quality","-mp3q") das_lame_quality = OPTARG_GETINT(); write_to_mp3 = true;
-//       OPTARG("--mp3-bitrate","-mp3b") das_lame_bitrate = OPTARG_GETINT(); write_to_mp3 = true;
-// 	  OPTARG("--mp3-samplerate", "-mp3s") das_lame_samplerate = OPTARG_GETINT(); write_to_mp3 = true;
-//       OPTARG("--ogg-quality","-oq") ogg_vbr_quality = OPTARG_GETFLOAT(); soundfile_format_is_set=true; soundfile_format="ogg";
-//       OPTARG("--write-to-stdout","-ws") write_to_stdout=true;use_vu=false;show_bufferusage=false;
-//       OPTARG("--disable-meter","-dm") use_vu=false;
-//       OPTARG("--hide-buffer-usage","-hbu") show_bufferusage=false;
-//       OPTARG("--disable-console","-dc") use_vu=false;show_bufferusage=false;
-//       OPTARG("--no-stdin","-ns") no_stdin=true;
-//       OPTARG("--daemon","") no_stdin=true; absolutely_silent=true; use_vu=false; silent=true; show_bufferusage=false;
-//       OPTARG("--linear-meter","-lm") vu_dB=false;
-//       OPTARG("--dB-meter-reference","-dBr") vu_dB=true;vu_bias=powf(10.0f,OPTARG_GETFLOAT()*-0.05f);//from meterbridge
-//       OPTARG("--meterbridge","-mb") use_meterbridge=true;
-//       OPTARG("--meterbridge-type","-mt") use_meterbridge=true;meterbridge_type=OPTARG_GETSTRING();
-//       OPTARG("--meterbridge-reference","-mr") use_meterbridge=true;meterbridge_reference=OPTARG_GETSTRING();
-//       OPTARG("--jack-transport","-jt") use_jack_transport=true;
-//       OPTARG("--jack-freewheel","-jf") use_jack_freewheel=true;
-//       OPTARG("--manual-connections","-mc") use_manual_connections=true;
-//       OPTARG("--filename","-fn") base_filename=OPTARG_GETSTRING();
-//       OPTARG("--osc","-O") {
-// #if HAVE_LIBLO
-//         osc_port=atoi(OPTARG_GETSTRING());
-// #else
-//         fprintf(stderr,"osc not supported. liblo was not installed when compiling jack_capture\n");
-//         exit(3);
-// #endif
-//       }
-//       OPTARG("--hook-open","-Ho")   hook_cmd_opened = OPTARG_GETSTRING();
-//       OPTARG("--hook-close","-Hc")  hook_cmd_closed = OPTARG_GETSTRING();
-//       OPTARG("--hook-rotate","-Hr") hook_cmd_rotate = OPTARG_GETSTRING();
-//       OPTARG("--hook-timing","-Ht") hook_cmd_timing = OPTARG_GETSTRING();
-//       OPTARG("--timestamp","-S") create_tme_file=true;
-//       OPTARG("--rotatefile","-Rf") rotateframe = OPTARG_GETINT();
-//       OPTARG("--timemachine","-tm") timemachine_mode = true;
-//       OPTARG("--timemachine-prebuffer","-tmpb") timemachine_prebuffer=OPTARG_GETFLOAT();
-// 	  OPTARG("--jack-name","-jn") jackname=OPTARG_GETSTRING();
-//       OPTARG_LAST() base_filename=OPTARG_GETSTRING();
-//     }OPTARGS_END;
-// 
-//   if(use_jack_freewheel == true && use_jack_transport == true){
-//     fprintf(stderr,"--jack-transport and --jack-freewheel are mutually exclusive options.\n");
-//     exit(2);
-// 	}
-// 
-//   if(write_to_mp3 == true) {
-// #if HAVE_LAME
-//     soundfile_format = "mp3";
-//     soundfile_format_is_set = true;
-//     if(min_buffer_time <= 0.0f)
-//       min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
-// #else
-//     fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
-//     exit(2);
-// #endif
-//   } else {
-//     if(min_buffer_time <= 0.0f)
-//       min_buffer_time = DEFAULT_MIN_BUFFER_TIME;
-//   }
-// 
-//   verbose_print("main() determine file format from filename\n");
-//   // If no format specified try to determine format from the base_filename
-//   if(!soundfile_format_is_set && base_filename) {
-//     char *ext = strrchr(base_filename, '.');
-// 
-//     if(ext) {
-//       ext++; // skip leading .
-//       soundfile_format = ext;
-//       soundfile_format_is_set = true;
-// 
-//       // handle mp3
-//       if(strcmp(soundfile_format, "mp3") == 0) {
-// #if HAVE_LAME
-//         write_to_mp3 = true;
-//         // the min_buffer_time may have been set before we knew it was mp3 format
-//         if(min_buffer_time<=0.0f || min_buffer_time == DEFAULT_MIN_BUFFER_TIME)
-//           min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
-// #else
-//         fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
-//         exit(2);
-// #endif
-//       }
-//     }
-//   }
-// 
-//   if(timemachine_mode==true) {
-//     min_buffer_time += timemachine_prebuffer;
-//     max_buffer_time += timemachine_prebuffer;
-//   }
-// 
-//   verbose_print("main() find default file format\n");
-//   if(soundfile_format_is_set==false){
-//     if(num_channels>2)
-//       soundfile_format=soundfile_format_multi;
-//     else
-//       soundfile_format=soundfile_format_one_or_two;
-//   }
-// 
-// 
-//   verbose_print("main() find filename\n");
-//   // Find filename
-//   {
-//     if(base_filename==NULL){
-//       base_filename=my_calloc(1,5000);
-//       for(int try=1;try<100000;try++){
-//         sprintf(base_filename,"%s%0*d.%s",filename_prefix,leading_zeros+1,try,soundfile_format);
-//         if(access(base_filename,F_OK)) break;
-//       }
-//     }
-//   }
+  // Intergrity Checks
+
+  if(use_jack_freewheel == true && use_jack_transport == true){
+    fprintf(stderr,"--jack-transport and --jack-freewheel are mutually exclusive options.\n");
+    exit(2);
+  }
+
+  if(write_to_mp3 == true) {
+#if HAVE_LAME
+    soundfile_format = "mp3";
+    soundfile_format_is_set = true;
+    if(min_buffer_time <= 0.0f)
+      min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
+#else
+    fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
+    exit(2);
+#endif
+  } else {
+    if(min_buffer_time <= 0.0f)
+      min_buffer_time = DEFAULT_MIN_BUFFER_TIME;
+  }
+
+  verbose_print("main() determine file format from filename\n");
+  // If no format specified try to determine format from the base_filename
+  if(!soundfile_format_is_set && base_filename) {
+    char *ext = strrchr(base_filename, '.');
+
+    if(ext) {
+      ext++; // skip leading .
+      soundfile_format = ext;
+      soundfile_format_is_set = true;
+
+      // handle mp3
+      if(strcmp(soundfile_format, "mp3") == 0) {
+#if HAVE_LAME
+        write_to_mp3 = true;
+        // the min_buffer_time may have been set before we knew it was mp3 format
+        if(min_buffer_time<=0.0f || min_buffer_time == DEFAULT_MIN_BUFFER_TIME)
+          min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
+#else
+        fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
+        exit(2);
+#endif
+      }
+    }
+  }
+
+  if(timemachine_mode==true) {
+    min_buffer_time += timemachine_prebuffer;
+    max_buffer_time += timemachine_prebuffer;
+  }
+
+  verbose_print("main() find default file format\n");
+  if(soundfile_format_is_set==false){
+    if(num_channels>2)
+      soundfile_format=soundfile_format_multi;
+    else
+      soundfile_format=soundfile_format_one_or_two;
+  }
+
+
+  verbose_print("main() find filename\n");
+  // Find filename
+  {
+    if(base_filename==NULL){
+      base_filename=my_calloc(1,5000);
+      for(int try=1;try<100000;try++){
+        sprintf(base_filename,"%s%0*d.%s",filename_prefix,leading_zeros+1,try,soundfile_format);
+        if(access(base_filename,F_OK)) break;
+      }
+    }
+  }
 }
 
 char *string_concat(char *s1,char *s2) {
@@ -2857,9 +3006,99 @@ void append_argv(char **v1, const char **v2, int len1, int len2, int max_size) {
     v1[write_pos++] = (char*)v2[read_pos++];
 }
 
+void display_parameters() {
+  // "--advanced-options"
+  // "--advanced-options"
+  // "--help-osc"
+  // "--bitdepth"
+  printf("bitdepth: %d\n", bitdepth);
+  // "--bufsize"
+  printf("min_buffer_time: %f\n", min_buffer_time);
+  // "--channels"
+  printf("num_channels: %d\n", num_channels);
+  // "--filename-prefix"
+  printf("filename_prefix: %s\n", filename_prefix);
+  // "--leading-zeros"
+  printf("leading_zeros: %d\n", leading_zeros);
+  // "--recording-time"
+  printf("recording_time: %f\n", recording_time);
+  // "--port"
+  // portnames_add(argv[++lokke]);
+  // "--format"
+  printf("soundfile_format: %s\n", soundfile_format);
+  printf("soundfile_format_is_set: %d\n", soundfile_format_is_set);
+  // "--version"
+  // puts(VERSION);
+  // "--silent"
+  printf("silent: %d\n", silent);
+  // "--debug"
+  printf("DEBUG: %d\n", DEBUG);
+  // "--absolutelty-silent"
+  printf("absolutely_silent: %d\n", absolutely_silent);
+  // "--verbose"
+  printf("verbose: %d\n", verbose);
+  // "--print-formats"
+  // print_all_formats();
+  // "--mp3"
+  printf("write_to_mp3: %d\n", write_to_mp3);
+  // "--mp3-quality"
+  printf("das_lame_quality: %d\n", das_lame_quality);
+  // "--mp3-bitrate"
+  printf("das_lame_bitrate: %d\n", das_lame_bitrate);
+  // "--mp3-samplerate"
+  printf("das_lame_samplerate: %d\n", das_lame_samplerate);
+  // "--ogg-quality"
+  printf("ogg_vbr_quality: %f\n", ogg_vbr_quality);
+  // "--write-to-stdout"
+  printf("write_to_stdout: %d\n", write_to_stdout);
+  // "--use_vu --disable-meter"
+  printf("use_vu: %d\n", use_vu);
+
+  printf("num_frames_to_record: %lld\n", num_frames_to_record);
+  // "--no_stdin"
+  printf("no_stdin: %d\n", no_stdin);
+  printf("fixed_duration: %d\n", fixed_duration);
+  printf("show_bufferusage: %d\n", show_bufferusage);
+  // "--linear-meter"
+  printf("vu_dB: %d\n", vu_dB);
+  // "--db-meter-reference"
+  printf("vu_bias: %f\n", vu_bias);
+  // "--meterbridge-type"
+  printf("use_meterbridge: %d\n", use_meterbridge);
+  printf("meterbridge_type: %s\n", meterbridge_type);
+  printf("meterbridge_reference: %s\n", meterbridge_reference);
+  // "--jack-transport"
+  printf("use_jack_transport: %d\n", use_jack_transport);
+  // "--jack-freewheel"
+  printf("use_jack_freewheel: %d\n", use_jack_freewheel);
+  // "--manual-connections"
+  printf("use_manual_connections: %d\n", use_manual_connections);
+  // "--filename"
+  printf("base_filename: %s\n", base_filename);
+  // "--osc"
+  printf("osc_port: %d\n", osc_port);
+  // "--hook-open"
+  printf("hook_cmd_opened: %s\n", hook_cmd_opened);
+  // "--hook-close"
+   printf("hook_cmd_closed: %s\n", hook_cmd_closed);
+   // "--hook-rotate"
+   printf("hook_cmd_rotate: %s\n", hook_cmd_rotate);
+   // "--hook-timing"
+   printf("hook_cmd_timing: %s\n", hook_cmd_timing);
+   // "--timestamp"
+   printf("create_tme_file: %d\n", create_tme_file);
+   // "--rotatefile"
+   printf("rotateframe: %lld\n", rotateframe);
+   // "--timemachine"
+   printf("timemachine_mode: %d\n", timemachine_mode);
+   // "--timemachine-prebuffer"
+   printf("timemachine_prebuffer: %f\n", timemachine_prebuffer);
+   // "--jack-name"
+   printf("jackname: %s\n", jackname);
+}
+
 
 int main (int argc, char *argv[]){
-  printf("main function call\n");
   g_thread_type = MAIN_THREAD;
 
   // Here we just redeclare the array of pointers
@@ -2888,48 +3127,29 @@ int main (int argc, char *argv[]){
   char **config_argv = read_config(&config_argc, 500);
   append_argv(config_argv, (const char**)argv, config_argc, argc, 500);
 
-//   printf("debug: %d\n", DEBUG);
-//   if (DEBUG) {
-//     int index = 0;
-//     while (argv[index] != NULL) {
-//       printf("argv %d - %s\n", index, argv[index]);
-//       index++;
-//     }
-// 
-//     index = 0;
-//     while (config_argv[index] != NULL) {
-//       printf("config argv %d - %s\n", index, config_argv[index]);
-//       index++;
-//     }
-//   }
-
   init_arguments(config_argc + argc, config_argv);
 
-  printf("global bitdepth %d\n", bitdepth);
-  printf("global bufsize %f\n", min_buffer_time);
-  printf("global num channels %d\n", num_channels);
-  printf("filename prfix %s\n", filename_prefix);
+  if (DEBUG) display_parameters();
 
-// #if HAVE_LIBLO
-//   if (init_osc(osc_port)) {
-//     /* no OSC available */
-//     osc_port=-1;
-//   }
-// #endif
-// 
-//   init_various();
-// 
-//   wait_until_recording_finished();
-// 
-//   stop_recording_and_cleanup();
-// 
-//   if (timemachine_mode == true && program_ended_with_return == true) {
-//     execvp (org_argv[0], (char *const *) org_argv);
-//     print_message("Error: exec returned: %s.\n", strerror(errno));
-//     exit(127);
-//   }
-// 
+#if HAVE_LIBLO
+  if (init_osc(osc_port)) {
+    /* no OSC available */
+    osc_port=-1;
+  }
+#endif
+
+  init_various();
+
+  wait_until_recording_finished();
+
+  stop_recording_and_cleanup();
+
+  if (timemachine_mode == true && program_ended_with_return == true) {
+    execvp (org_argv[0], (char *const *) org_argv);
+    print_message("Error: exec returned: %s.\n", strerror(errno));
+    exit(127);
+  }
+
   return 0;
 }
-
 
