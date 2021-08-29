@@ -76,7 +76,7 @@ void shutdown_osc(void);
 static bool DEBUG = 0;
 static float min_buffer_time=-1.0f;
 static float max_buffer_time=40.0f;
-static jack_client_t *client=NULL;
+static jack_client_t * client=NULL;
 #define DEFAULT_NUM_CHANNELS 2
 #define DEFAULT_NUM_CHANNELS_SDS 1
 static int num_channels=-1;
@@ -392,9 +392,8 @@ static int findnumports(const char **ports){
 
 static void portnames_add_defaults(void){
   if(cportnames==NULL){
-
     {
-      const char **portnames = jack_get_ports(client,NULL,NULL,JackPortIsPhysical|JackPortIsInput);
+      const char **portnames = jack_get_ports(client, NULL, NULL, JackPortIsPhysical|JackPortIsInput);
       int num_ports    = findnumports(portnames);
 
       if(num_ports==0){
@@ -441,7 +440,7 @@ static void portnames_add_defaults(void){
 }
 
 
-static void portnames_add(char *name){
+static void portnames_add(char *name) {
   const char **new_outportnames;
   int add_ch;
 
@@ -479,6 +478,7 @@ static void portnames_add(char *name){
       cportnames[num_cportnames] = new_outportnames[ch];
       num_cportnames++;
     }
+
   } else {
     fprintf(stderr,"\nWarning, no port(s) with name \"%s\".\n",name);
 
@@ -2075,10 +2075,17 @@ static void jack_shutdown(void *arg){
 }
 
 
-static jack_client_t *new_jack_client(char *name){
+static jack_client_t * new_jack_client(char *name) {
+  // This type is also defined in jack lib
+  // returned from several jack operations, formed by OR-ing
+  // the relevant status bits
   jack_status_t status;
 
   // jack_client_open comes from library jack/jack.h
+  // JackNoStartServer is an enum declared in jack lib with value 0x01
+  // It is basically the code to tell jack to start the server
+  // It can be set by an environment variable as well JACK_NO_START_SERVER
+  // check jackaudio.org/api/types_8h.html
   jack_client_t *client = jack_client_open(name, JackNoStartServer, &status, NULL);
 
   if(client == NULL) {
@@ -2093,19 +2100,32 @@ static jack_client_t *new_jack_client(char *name){
 
 static void start_jack(void) {
   static bool I_am_already_called=false;
-  if(I_am_already_called) // start_jack is called more than once if the --port argument has been used.
+
+  // start_jack is called more than once
+  // if the --port argument has been used.
+  if(I_am_already_called)
     return;
 
   // function new jack client defined in this file
+  // client is a global variable defined on top
+  // with a custom type from jack lib, jack_client_t
+  // jackname by default is jack_capture
   client = new_jack_client(jackname);
 
+  // function from jack lib
+  // static variable declared on top
+  // only set once here (default 48000)
+  // number of samples per second!
   jack_samplerate = jack_get_sample_rate(client);
+
+  // function from jack lib
+  // this is a static variable defined on top
+  // only set once here (default 2048)
+  // seems to be the buffer for accumulating entry bytes
   block_size = jack_get_buffer_size(client);
 
   I_am_already_called=true;
 }
-
-
 
 static pthread_t keypress_thread={0};
 static void* keypress_func(void* arg){
@@ -2819,6 +2839,7 @@ void init_various(void) {
   {
     if(use_manual_connections == false)
       start_connection_thread();
+
     start_jack();
     portnames_add_defaults();
   }
@@ -2843,7 +2864,7 @@ void init_various(void) {
       exit(-2);
     }
 
-    vringbuffer_set_receiver_callback(vringbuffer,disk_callback);
+    vringbuffer_set_receiver_callback(vringbuffer, disk_callback);
   }
 
   verbose_print("main() Init waiting.\n");
