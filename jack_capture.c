@@ -74,8 +74,8 @@ void shutdown_osc(void);
 #define DEFAULT_MIN_BUFFER_TIME 4
 #define DEFAULT_MIN_MP3_BUFFER_TIME 8
 static bool DEBUG = 0;
-static float min_buffer_time=-1.0f;
-static float max_buffer_time=40.0f;
+static float min_buffer_time = -1.0f;
+static float max_buffer_time = 40.0f;
 static jack_client_t * client=NULL;
 #define DEFAULT_NUM_CHANNELS 2
 #define DEFAULT_NUM_CHANNELS_SDS 1
@@ -112,10 +112,6 @@ bool verbose=false;
 static bool absolutely_silent=false;
 static bool create_tme_file=false;
 static bool write_to_stdout=false;
-static bool write_to_mp3 = false;
-static int das_lame_quality = 2; // 0 best, 9 worst.
-static int das_lame_bitrate = -1;
-static int das_lame_samplerate = 0;
 static float ogg_vbr_quality = -1.0;
 static bool use_jack_transport = false;
 static bool use_jack_freewheel = false;
@@ -149,11 +145,6 @@ static int total_xruns=0;
 static volatile int freewheel_mode=0;
 static char *jackname="jack_capture"; // limited to 33 characters
 
-/* Disk thread */
-#if HAVE_LAME
-static lame_global_flags *lame;
-#endif
-
 static bool disk_thread_has_high_priority=false;
 
 /* Helper thread */
@@ -165,14 +156,16 @@ static float *vu_peakvals=NULL;
 
 /* Synchronization between jack process thread and disk thread. */
 static DEFINE_ATOMIC(bool, is_initialized) = false; // This $@#$@#$ variable is needed because jack ports must be initialized _after_ (???) the client is activated. (stupid jack)
-static DEFINE_ATOMIC(bool, is_running) = true; // Mostly used to stop recording as early as possible.
+
+// define atomic will just set the variable
+static bool is_running_atomic = true;
 
 /* Buffer */
 static int block_size; // Set once only. Never changes value after that, even if jack buffer size changes.
 
 static bool buffer_interleaved = true;
 
-typedef struct buffer_t{
+typedef struct buffer_t {
   int overruns;
   int pos;
   sample_t data[];
@@ -296,11 +289,22 @@ static float frames_to_seconds(int frames){
 
 // round up.
 static int seconds_to_blocks(float seconds){
-  return (int)ceilf((seconds*jack_samplerate/(float)block_size));
+  // jack sample rate is by default 48000
+  // and block size by default is 2048
+  //
+  // so sample rate is the number of samples per seconds
+  // and if we have 4 seconds of buffer time
+  // that will be 192000 samples divided by 2048 (size of the blocks)
+  // results in 93.75 blocks rounded to 94
+  return (int)ceilf(
+    (seconds * jack_samplerate / (float)block_size));
 }
 
 // same return value as seconds_to_blocks
-static int seconds_to_buffers(float seconds){
+// tranform buffers given in seconds to blocks
+static int seconds_to_buffers(float seconds) {
+  // by the explanation above we have 94 blocks of buffer size 2048
+  // to capture 4 seconds of audio
   return seconds_to_blocks(seconds);
 }
 
@@ -352,11 +356,31 @@ static int autoincrease_callback(vringbuffer_t *vrb, bool first_call, int readin
 }
 
 static void buffers_init(){
-  verbose_print("bufinit1. sizeof(long): %u, sizeof(float): %u, sizeof(double):%u, sizeof(int):%u, sizeof(void*):%u\n",sizeof(long),sizeof(float),sizeof(double),sizeof(int),sizeof(void*));
+  verbose_print(
+    "bufinit1. sizeof(long): %u, "
+    "sizeof(float): %u, "
+    "sizeof(double):%u, "
+    "sizeof(int):%u, "
+    "sizeof(void*):%u\n ",
+    sizeof(long),
+    sizeof(float),
+    sizeof(double),
+    sizeof(int),
+    sizeof(void*)
+  );
 
-  vringbuffer = vringbuffer_create(JC_MAX(4,seconds_to_buffers(min_buffer_time)),
-                                   JC_MAX(4,seconds_to_buffers(max_buffer_time)),
-                                   buffer_size_in_bytes);
+  // the seconds_to_buffers function will return
+  // the number of blocks of memory needed to capture
+  // the buffer size. because both calls are maxed with 4
+  // then the first will be 94 (called with -1)
+  // and the second 938 (called with 40)
+  //
+  // buffer size in bytes is set in portnames_add_defaults
+  vringbuffer = vringbuffer_create(
+    JC_MAX(4, seconds_to_buffers(min_buffer_time)),
+    JC_MAX(4, seconds_to_buffers(max_buffer_time)),
+    buffer_size_in_bytes
+  );
 
   if(vringbuffer==NULL){
     fprintf(stderr,"Unable to allocate memory for buffers\n");
@@ -435,7 +459,8 @@ static void portnames_add_defaults(void){
   vu_peaks    = my_calloc(sizeof(int),num_channels);
   vu_peakvals = my_calloc(sizeof(float),num_channels);
 
-  buffer_size_in_bytes = ALIGN_UP_DOUBLE(sizeof(buffer_t) + block_size*num_channels*sizeof(sample_t));
+  buffer_size_in_bytes = ALIGN_UP_DOUBLE(
+      sizeof(buffer_t) + block_size * num_channels * sizeof(sample_t));
   verbose_print("buf_size_in_bytes: %d\n",buffer_size_in_bytes);
 }
 
@@ -1041,69 +1066,6 @@ static DEFINE_ATOMIC(int, g_store_sync) = 0;
 static int ssync_offset = 0;
 static jack_nframes_t j_latency = 0;
 
-#if HAVE_LAME
-static FILE *mp3file = NULL;
-static unsigned char *mp3buf;
-static int mp3bufsize;
-
-static int open_mp3file(void){
-  buffer_interleaved = false;
-
-  mp3bufsize = buffer_size_in_bytes * 10 * num_channels;
-  if(mp3bufsize<4096*4) // lame_encode_flush requires at least 7200 bytes
-    mp3bufsize=4096*4;
-
-  mp3buf = malloc(mp3bufsize);
-
-  lame = lame_init();
-  if(lame==NULL){
-    print_message("lame_init failed.\n");
-    return 0;
-  }
-
-  lame_set_num_channels(lame, num_channels);
-
-  lame_set_in_samplerate(lame,(int)jack_samplerate);
-
-  if ((int)das_lame_samplerate == 0) {
-	  lame_set_out_samplerate(lame,(int)jack_samplerate);
-  } else {
-	  lame_set_out_samplerate(lame,(int)das_lame_samplerate);
-  }
-
-  lame_set_quality(lame,das_lame_quality);
-
-  if(das_lame_bitrate!=-1){
-    lame_set_brate(lame, das_lame_bitrate);
-    lame_set_VBR_min_bitrate_kbps(lame, lame_get_brate(lame));
-  }
-
-  {
-    int ret = lame_init_params(lame);
-    if(ret<0){
-      print_message("Illegal parameters for lame. (%d)\n",ret);
-      return 0;
-    }
-  }
-
-  if(lame_get_num_channels(lame)!=num_channels){
-    print_message("Error. lame does not support %d channel mp3 files.\n",num_channels);
-    return 0;
-  }
-
-  mp3file = fopen(filename,"w");
-  if(mp3file == NULL){
-    print_message("Can not open file \"%s\" for output (%s)\n", filename, strerror(errno));
-    return 0;
-  }
-
-  hook_file_opened(filename);
-  return 1;
-}
-#endif
-
-
-
 #include "setformat.c"
 
 
@@ -1126,12 +1088,6 @@ static int open_soundfile(void){
       filename=strdup(base_filename);
     }
   }
-
-#if HAVE_LAME
-  if(write_to_mp3==true)
-    return open_mp3file();
-#endif
-
 
   /////////////////////////
   // Code below for sndfile
@@ -1212,22 +1168,11 @@ static int open_soundfile(void){
 }
 
 
-#if HAVE_LAME
-static int mp3_write(void *das_data,size_t frames,bool do_flush);
-#endif
-
 static void close_soundfile(void){
 
   if(write_to_stdout==false){
     if(soundfile!=NULL)
       sf_close (soundfile);
-#if HAVE_LAME
-    if(mp3file!=NULL){
-      mp3_write(NULL,0,true); // flush
-      lame_close(lame);
-      fclose(mp3file);
-    }
-#endif
   }
 
   hook_file_closed(filename, total_overruns + total_xruns, disk_errors);
@@ -1350,37 +1295,12 @@ static int stdout_write(sample_t *buffer,size_t frames){
 
   return 1; }
 
-#if HAVE_LAME
-static int mp3_write(void *das_data,size_t frames,bool do_flush){
-  int size;
-
-  if(do_flush){
-    size = lame_encode_flush(lame, mp3buf, mp3bufsize);
-    //print_message("mp3 flush size: %d\n",size);
-  }else{
-    sample_t *data1=(sample_t*)das_data;
-    sample_t *data2=&data1[frames];
-    size = lame_encode_buffer_float(lame, data1,data2, frames, mp3buf, mp3bufsize);
-  }
-
-  if(size>0)
-    fwrite(mp3buf,size,1,mp3file);
-
-  return 1;
-}
-#endif
-
 static int disk_write(void *data,size_t frames){
 
   num_frames_written_to_disk += frames;
 
   if(write_to_stdout==true)
     return stdout_write(data,frames);
-
-#if HAVE_LAME
-  if(write_to_mp3==true)
-    return mp3_write(data,frames,false);
-#endif
 
   if(soundfile==NULL)
     return 0;
@@ -1406,7 +1326,7 @@ static int disk_write_overruns(int num_overruns){
                   "    Try a bigger buffer than -B %f\n%s",
                   num_overruns,num_overruns==1 ? "" : "s",
                   min_buffer_time,
-                  ATOMIC_GET(is_running) ? "Continue recording...\n" : ""
+                  __atomic_load_n(&is_running_atomic, __ATOMIC_SEQ_CST) ? "Continue recording...\n" : ""
                   );
 
   overruns+=num_overruns;
@@ -1669,8 +1589,9 @@ static int process(jack_nframes_t nframes, void *arg){
   if(ATOMIC_GET(is_initialized)==false)
     return 0;
 
-  if(ATOMIC_GET(is_running)==false)
+  if(__atomic_load_n(&is_running_atomic, __ATOMIC_SEQ_CST) == false) {
     return 0;
+  }
 
   if(process_state==RECORDING_FINISHED)
     return 0;
@@ -1941,22 +1862,31 @@ static void connect_ports(jack_port_t** ports){
 
 static sem_t connection_semaphore;
 
-static void* connection_thread(void *arg){
+static void * connection_thread(void *arg) {
   (void)arg;
 
-  while(1){
+  while(1) {
+    // printf("start connection thread while loop\n");
     sem_wait(&connection_semaphore);
 
-    if(ATOMIC_GET(is_running)==false)
+    // atomic functions comply with C++11 memory model
+    if(__atomic_load_n(&is_running_atomic, __ATOMIC_SEQ_CST) == false) {
+      printf("goto done\n");
       goto done;
-    if(connect_meterbridge==1){
+    }
+
+    if (connect_meterbridge == 1) {
+      printf("enter meterbridge\n");
       connect_ports(ports_meterbridge);
-      connect_meterbridge=0;
+      connect_meterbridge = 0;
       continue;
     }
-    if(ATOMIC_GET(is_initialized) && reconnect_ports_questionmark()){
-      if(silent==false)
-	print_message("Reconnecting ports.\n");
+
+    if (ATOMIC_GET(is_initialized) && reconnect_ports_questionmark()) {
+      printf("enter is initialized and reconnect ports is true\n");
+      if (silent == false) {
+        print_message("Reconnecting ports.\n");
+      }
 
       jack_port_t **ports = ATOMIC_GET(g_ports);
 
@@ -1969,8 +1899,9 @@ static void* connection_thread(void *arg){
   }
 
  done:
-  if(verbose==true)
+  if (verbose == true) {
     fprintf(stderr,"connection thread finished\n");
+  }
   return NULL;
 }
 
@@ -2106,7 +2037,7 @@ static void start_jack(void) {
   if(I_am_already_called)
     return;
 
-  // function new jack client defined in this file
+  // function new_jack_client defined in this file
   // client is a global variable defined on top
   // with a custom type from jack lib, jack_client_t
   // jackname by default is jack_capture
@@ -2123,6 +2054,7 @@ static void start_jack(void) {
   // only set once here (default 2048)
   // seems to be the buffer for accumulating entry bytes
   block_size = jack_get_buffer_size(client);
+  printf("block size: %d\n", block_size);
 
   I_am_already_called=true;
 }
@@ -2194,18 +2126,9 @@ static const char *advanced_help =
   "[--absolutely-silent] or [-as]    -> Suppresses all messages printed to the terminal.\n"
   "                                     Warning: libraries used by jack_capture may still print messages.\n"
   "[--verbose] or [-V]               -> Prints some extra information to the terminal.\n"
-  "[--mp3] or [-mp3]                 -> Writes to an mp3 file using liblame (LAME).\n"
-  "                                     This option will overwrite any format specified by the output filename.\n"
-  "                                     (the --format option has no effect using this option)\n"
-  "[--mp3-quality n] or [-mp3q n]    -> Selects mp3 quality provided by liblame. n=0 is best, n=9 is worst.\n"
-  "                                     Default n is 2. (0 uses the most amount of CPU, 9 uses the least)\n"
-  "[--mp3-bitrate n] or [-mp3b n]    -> Selects mp3 bitrate (in kbit/s).\n"
-  "                                     Default is set by liblame. (currently 128)\n"
-  "[--mp3-samplerate n] or [-mp3s n] -> Sets output sample rate for LAME\n"
   "[--ogg-quality n] or [-oq n]      -> Set Vorbis quality (0.0 low - 1.0 high)\n"
   "                                     default is set by libvorbis (~0.5)\n"
   "[--write-to-stdout] or [-ws]      -> Writes 16 bit little endian to stdout. (the --format option, the\n"
-  "                                     --mp3 option, and some others have no effect using this option)\n"
   "[--disable-meter] or [-dm]        -> Disable console meter.\n"
   "[--hide-buffer-usage] or [-hbu]   -> Disable buffer usage updates in the console.\n"
   "[--disable-console] or [-dc]      -> Disable console updates. Same as \"-dm -hbu\".\n"
@@ -2226,7 +2149,7 @@ static const char *advanced_help =
   "[--jack-name]/[-jn]               -> Set name of this jack_capture instance in the jack patchbay.\n"
   "[--manual-connections]/[-mc]      -> jack_capture will not connect any ports for you. \n"
   "[--bufsize s] or [-B s]           -> Initial/minimum buffer size in seconds. Default is 8 seconds\n"
-  "                                     for mp3 files, and 4 seconds for all other formats.\n"
+  "                                     and 4 seconds for all other formats.\n"
   "[--maxbufsize] or [-MB]           -> Maximum buffer size in seconds jack_capture will allocate.\n"
   "                                     Default is 40. (Buffer is automatically increased during\n"
   "                                     recording when needed. But it will never go beyond this size.)\n"
@@ -2265,9 +2188,6 @@ static const char *advanced_help =
   "\n"
   "To record a stereo file of what you hear in the ogg format:\n"
   " $jack_capture -f ogg\n"
-  "\n"
-  "To record a stereo file of what you hear in the mp3 format:\n"
-  " $jack_capture -mp3\n"
   "\n"
   "To record a named stereo file of what you hear in the ogg format:\n"
   " $jack_capture output.ogg\n"
@@ -2417,11 +2337,6 @@ void init_arguments(int argc, char *argv[]) {
       }
 
       soundfile_format = argv[++lokke];
-
-      if(!strcmp("mp3", soundfile_format)){
-        write_to_mp3 = true;
-      }
-
       soundfile_format_is_set=true;
     } else if (!strcmp("--version", a) || !strcmp("-v", a)) {
       puts(VERSION);
@@ -2440,32 +2355,6 @@ void init_arguments(int argc, char *argv[]) {
     } else if (!strcmp("--print-formats", a) || !strcmp("-pf", a)) {
       print_all_formats();
       exit(0);
-    } else if (!strcmp("--mp3", a) || !strcmp("-mp3", a)) {
-      write_to_mp3 = true;
-    } else if (!strcmp("--mp3-quality", a) || !strcmp("-mp3q", a)) {
-      if (lokke == argc - 1) {
-        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
-        exit(0);
-      }
-
-      das_lame_quality = atoll(argv[++lokke]);
-      write_to_mp3 = true;
-    } else if (!strcmp("--mp3-bitrate", a) || !strcmp("-mp3b", a)) {
-      if (lokke == argc - 1) {
-        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
-        exit(0);
-      }
-
-      das_lame_bitrate = atoll(argv[++lokke]);
-      write_to_mp3 = true;
-    } else if (!strcmp("--mp3-samplerate", a) || !strcmp("-mp3s", a)) {
-      if (lokke == argc - 1) {
-        fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
-        exit(0);
-      }
-
-      das_lame_samplerate = atoll(argv[++lokke]);
-      write_to_mp3 = true;
     } else if (!strcmp("--ogg-quality", a) || !strcmp("-oq", a)) {
       if (lokke == argc - 1) {
         fprintf(stderr,"Must supply argument for '%s'\n", argv[lokke]);
@@ -2621,20 +2510,8 @@ void init_arguments(int argc, char *argv[]) {
     exit(2);
   }
 
-  if(write_to_mp3 == true) {
-#if HAVE_LAME
-    soundfile_format = "mp3";
-    soundfile_format_is_set = true;
-    if(min_buffer_time <= 0.0f)
-      min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
-#else
-    fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
-    exit(2);
-#endif
-  } else {
-    if(min_buffer_time <= 0.0f)
-      min_buffer_time = DEFAULT_MIN_BUFFER_TIME;
-  }
+  if(min_buffer_time <= 0.0f)
+    min_buffer_time = DEFAULT_MIN_BUFFER_TIME;
 
   verbose_print("main() determine file format from filename\n");
   // If no format specified try to determine format from the base_filename
@@ -2645,19 +2522,6 @@ void init_arguments(int argc, char *argv[]) {
       ext++; // skip leading .
       soundfile_format = ext;
       soundfile_format_is_set = true;
-
-      // handle mp3
-      if(strcmp(soundfile_format, "mp3") == 0) {
-#if HAVE_LAME
-        write_to_mp3 = true;
-        // the min_buffer_time may have been set before we knew it was mp3 format
-        if(min_buffer_time<=0.0f || min_buffer_time == DEFAULT_MIN_BUFFER_TIME)
-          min_buffer_time = DEFAULT_MIN_MP3_BUFFER_TIME;
-#else
-        fprintf(stderr,"mp3 not supported. liblame was not installed when compiling jack_capture\n");
-        exit(2);
-#endif
-      }
     }
   }
 
@@ -2837,8 +2701,12 @@ void init_various(void) {
   verbose_print("main() init jack 1\n");
   // Init jack 1
   {
-    if(use_manual_connections == false)
+    if(use_manual_connections == false) {
+      // inits a semaphore
+      // starts an infinite loop
+      // which locks the semaphore
       start_connection_thread();
+    }
 
     start_jack();
     portnames_add_defaults();
@@ -2983,7 +2851,7 @@ void wait_until_recording_finished(void){
 void stop_recording_and_cleanup(void){
   verbose_print("main() Stop recording and clean up.\n");
 
-  ATOMIC_SET(is_running, false);
+  __atomic_store_n (&is_running_atomic, false, __ATOMIC_SEQ_CST);
 
   if(use_manual_connections==false)
     stop_connection_thread();
@@ -3060,14 +2928,6 @@ void display_parameters() {
   printf("verbose: %d\n", verbose);
   // "--print-formats"
   // print_all_formats();
-  // "--mp3"
-  printf("write_to_mp3: %d\n", write_to_mp3);
-  // "--mp3-quality"
-  printf("das_lame_quality: %d\n", das_lame_quality);
-  // "--mp3-bitrate"
-  printf("das_lame_bitrate: %d\n", das_lame_bitrate);
-  // "--mp3-samplerate"
-  printf("das_lame_samplerate: %d\n", das_lame_samplerate);
   // "--ogg-quality"
   printf("ogg_vbr_quality: %f\n", ogg_vbr_quality);
   // "--write-to-stdout"

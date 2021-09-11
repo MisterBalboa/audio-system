@@ -162,9 +162,14 @@ static bool vringbuffer_increase_writer1(vringbuffer_t *vrb,int num_elements,boo
 }
 
 
-vringbuffer_t* vringbuffer_create	(int num_elements_during_startup, int max_num_elements,size_t element_size){
-  //fprintf(stderr,"Creating %d %d %d\n",num_elements_during_startup,max_num_elements,element_size);
-  vringbuffer_t *vrb=calloc(1,sizeof(struct vringbuffer_t));
+vringbuffer_t * vringbuffer_create(
+  int num_elements_during_startup,
+  int max_num_elements,
+  size_t element_size
+) {
+  printf("num elements during start up %d\n", num_elements_during_startup);
+  printf("max num elements %d\n", max_num_elements);
+  vringbuffer_t *vrb = calloc(1, sizeof(struct vringbuffer_t));
 
   vrb->for_writer1 = jack_ringbuffer_create(sizeof(void*) * max_num_elements);
   vrb->for_writer2 = jack_ringbuffer_create(sizeof(void*) * max_num_elements);
