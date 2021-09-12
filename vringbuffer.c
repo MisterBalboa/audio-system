@@ -96,72 +96,94 @@ int   vringbuffer_writing_size    (vringbuffer_t *vrb);
 
 ////////////////// Implementation ///////////////////////////////////
 
+static void * my_malloc(size_t size1, size_t size2) {
+  size_t size = size1 * size2;
+  void * ret = malloc(size);
 
-static void* my_malloc(size_t size1,size_t size2){
-  size_t size=size1*size2;
-  void* ret=malloc(size);
-  if(ret==NULL){
+  if (ret == NULL) {
     fprintf(stderr,"\nOut of memory. Try a smaller buffer.\n");
     return NULL;
   }
 
-  // Touch all pages. (earlier all memory was nulled out, but that puts a strain on the memory bus)
+  // Touch all pages.
+  // earlier all memory was nulled out,
+  // but that puts a strain on the memory bus
   {
     long pagesize = sysconf(_SC_PAGESIZE);
-    char *cret=ret;
-    size_t i=0;
-    for(i=0;i<size;i+=pagesize)
+    char *cret = ret;
+    size_t i = 0;
+
+    for(i = 0; i < size; i += pagesize) {
       cret[i]=0;
+    }
   }
 
   return ret;
 }
 
+static bool vringbuffer_increase_writer1(
+  vringbuffer_t *vrb,
+  int num_elements,
+  bool first_call
+) {
 
-static bool vringbuffer_increase_writer1(vringbuffer_t *vrb,int num_elements,bool first_call){
-
-  if(num_elements+vrb->curr_num_elements > vrb->max_num_elements)
+  if(num_elements + vrb->curr_num_elements > vrb->max_num_elements)
     num_elements = vrb->max_num_elements - vrb->curr_num_elements;
 
   if(num_elements==0)
     return true;
 
-  pthread_mutex_lock(&vrb->increase_lock);{
+  pthread_mutex_lock(&vrb->increase_lock); {
     int i;
 
-    vringbuffer_list_t *element=my_malloc(1,sizeof(vringbuffer_list_t) + (num_elements*vrb->element_size));
-    element->next=vrb->allocated_mem;
-    vrb->allocated_mem=element;
+    vringbuffer_list_t * element = my_malloc(
+      1,
+      sizeof(vringbuffer_list_t) + (num_elements * vrb->element_size)
+    );
 
-    char *das_buffer=(char*)(element+1);
+    element->next = vrb->allocated_mem;
+    vrb->allocated_mem = element;
+
+    char * das_buffer = (char*)(element + 1);
     
-    if(das_buffer==NULL)
+    if(das_buffer == NULL) {
       return false;
+    }
 
     if(first_call){
       // Make sure at least a certain amount of the buffer is in a cache.
       // Might create a less shocking startup.
       int num=8;
-      if(num>num_elements)
+      if(num>num_elements) {
         num=num_elements;
-      memset(das_buffer,0,num*vrb->element_size);
-    }
-    
-      for(i=0;i<num_elements;i++){
-        char *pointer =  das_buffer + (i*vrb->element_size);
-        jack_ringbuffer_write(vrb->for_writer1,
-                              (char*)&pointer,
-                              sizeof(char*));
       }
 
-      vrb->curr_num_elements += num_elements;
+      memset(das_buffer, 0, num*vrb->element_size);
+    }
+    
+    for(i = 0; i < num_elements; i++) {
+      char *pointer =  das_buffer + (i * vrb->element_size);
 
-  }pthread_mutex_unlock(&vrb->increase_lock);
+      jack_ringbuffer_write(
+        vrb->for_writer1,
+        (char*)&pointer,
+        sizeof(char*)
+      );
+    }
+
+    vrb->curr_num_elements += num_elements;
+
+  } pthread_mutex_unlock(&vrb->increase_lock);
   
   return true;
 }
 
 
+// v might stand for virtual
+// the fact is that this is a custom buffers
+// constructor that uses the jack_ringbuffer_create
+// to create 3 ringbuffers, namely for writer 1, 2 and for reader
+// the struct vringbuffer_t is defined in vringbuffer.h
 vringbuffer_t * vringbuffer_create(
   int num_elements_during_startup,
   int max_num_elements,
@@ -169,7 +191,9 @@ vringbuffer_t * vringbuffer_create(
 ) {
   printf("num elements during start up %d\n", num_elements_during_startup);
   printf("max num elements %d\n", max_num_elements);
-  vringbuffer_t *vrb = calloc(1, sizeof(struct vringbuffer_t));
+  printf("elements size %d\n", element_size);
+
+  vringbuffer_t * vrb = calloc(1, sizeof(struct vringbuffer_t));
 
   vrb->for_writer1 = jack_ringbuffer_create(sizeof(void*) * max_num_elements);
   vrb->for_writer2 = jack_ringbuffer_create(sizeof(void*) * max_num_elements);
@@ -180,9 +204,9 @@ vringbuffer_t * vringbuffer_create(
 
   vrb->please_stop=false;
 
-  pthread_mutex_init(&vrb->increase_lock,NULL);
+  pthread_mutex_init(&vrb->increase_lock, NULL);
 
-  if(vringbuffer_increase_writer1(vrb,num_elements_during_startup,true)==false)
+  if(vringbuffer_increase_writer1(vrb, num_elements_during_startup, true) == false)
     return NULL;
 
   vrb->receiver_trigger = create_upwaker();
@@ -234,7 +258,7 @@ static void *autoincrease_func(void* arg){
 
     int num_new_elements = vrb->autoincrease_callback(vrb,false,reading_size,writing_size);
     if(num_new_elements>0)
-      vringbuffer_increase_writer1(vrb,num_new_elements,false);
+      vringbuffer_increase_writer1(vrb, num_new_elements, false);
 
     if(vrb->autoincrease_interval==0)
       upwaker_sleep(vrb->autoincrease_trigger);
@@ -250,7 +274,11 @@ void vringbuffer_trigger_autoincrease_callback(vringbuffer_t *vrb){
   upwaker_wake_up(vrb->autoincrease_trigger);
 }
 
-void vringbuffer_set_autoincrease_callback  (vringbuffer_t *vrb, Vringbuffer_autoincrease_callback callback, useconds_t interval){
+void vringbuffer_set_autoincrease_callback(
+  vringbuffer_t *vrb,
+  Vringbuffer_autoincrease_callback callback,
+  useconds_t interval
+) {
   vrb->autoincrease_callback = callback;
   vrb->autoincrease_interval = interval;
 

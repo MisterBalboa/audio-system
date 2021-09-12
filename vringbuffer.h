@@ -54,7 +54,7 @@ typedef struct vringbuffer_t{
   SEM_TYPE_T autoincrease_started;
   Vringbuffer_autoincrease_callback autoincrease_callback;
   useconds_t autoincrease_interval;
-}vringbuffer_t;
+} vringbuffer_t;
 
 
 

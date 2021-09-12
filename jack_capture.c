@@ -68,7 +68,9 @@ void shutdown_osc(void);
 #define JC_MIN(a,b) (((a)<(b))?(a):(b))
 
 #define ALIGN_UP(value, alignment) (((uintptr_t)value + alignment - 1) & -alignment)
-#define ALIGN_UP_DOUBLE(p) ALIGN_UP(p, sizeof(double)) // Using double because double should always be very large.
+
+// Using double because double should always be very large.
+#define ALIGN_UP_DOUBLE(p) ALIGN_UP(p, sizeof(double)) 
 
 /* Arguments and their default values */
 #define DEFAULT_MIN_BUFFER_TIME 4
@@ -325,7 +327,12 @@ static float buffers_to_seconds(int buffers){
 }
 
 
-static int autoincrease_callback(vringbuffer_t *vrb, bool first_call, int reading_size, int writing_size){
+static int autoincrease_callback(
+  vringbuffer_t *vrb,
+  bool first_call,
+  int reading_size,
+  int writing_size
+) {
   (void)vrb;
   (void)reading_size;
 
@@ -349,8 +356,15 @@ static int autoincrease_callback(vringbuffer_t *vrb, bool first_call, int readin
       prev_state=state; } }
 #endif
 
-  if(buffers_to_seconds(writing_size) < min_buffer_time)
-    return 2; // autoincrease_callback is called approx. at every block. So it should not be necessary to return a value higher than 2. Returning a very low number might also theoretically put a lower constant strain on the memory bus, thus theoretically lower the chance of xruns.
+  if(buffers_to_seconds(writing_size) < min_buffer_time) {
+    // autoincrease_callback is called approx
+    // at every block, so it should not be necessary
+    // to return a value higher than 2.
+    // Returning a very low number might also theoretically
+    // put a lower constant strain on the memory bus,
+    // thus theoretically lower the chance of xruns.
+    return 2; 
+  }
 
   return 0;
 }
@@ -371,23 +385,24 @@ static void buffers_init(){
 
   // the seconds_to_buffers function will return
   // the number of blocks of memory needed to capture
-  // the buffer size. because both calls are maxed with 4
+  // the buffer size. because both calls are maxed with the number 4,
   // then the first will be 94 (called with -1)
   // and the second 938 (called with 40)
   //
-  // buffer size in bytes is set in portnames_add_defaults
+  // buffer_size_in_bytes is set in portnames_add_defaults to 16392
   vringbuffer = vringbuffer_create(
     JC_MAX(4, seconds_to_buffers(min_buffer_time)),
     JC_MAX(4, seconds_to_buffers(max_buffer_time)),
     buffer_size_in_bytes
   );
 
-  if(vringbuffer==NULL){
+  if (vringbuffer == NULL) {
     fprintf(stderr,"Unable to allocate memory for buffers\n");
     exit(-1);
   }
 
-  vringbuffer_set_autoincrease_callback(vringbuffer,autoincrease_callback,0);
+  vringbuffer_set_autoincrease_callback(
+    vringbuffer, autoincrease_callback, 0);
 
   current_buffer = vringbuffer_get_writing(vringbuffer);
   empty_buffer   = my_calloc(sizeof(sample_t),block_size*num_channels);
@@ -589,20 +604,21 @@ static void print_ln(void){
 }
 
 static void print_console_top(void){
-  if(use_vu){
+  if(use_vu) {
     int lokke=0;
     char c='"';
     // Set cyan color
     printf("%c[36m",0x1b);
 
-    //printf("****");
     printf("   |");
+
     for(lokke=0;lokke<vu_len;lokke++)
       putchar(c);
+
     printf("|");print_ln();
     printf("%c[0m",0x1b); // reset colors
     fflush(stdout);
-  }else{
+  } else {
     //print_ln();
   }
 }
@@ -637,7 +653,7 @@ static char *vu_not_recording="-----------Press <Return> to start recording-----
 // Console colors:
 // http://www.linuxjournal.com/article/8603
 
-static void print_console(bool move_cursor_to_top_doit,bool force_update){
+static void print_console(bool move_cursor_to_top_doit, bool force_update){
   //int num_channels=4;
   int ch;
   char vol[vu_len+50];
